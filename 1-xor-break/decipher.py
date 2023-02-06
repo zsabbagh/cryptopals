@@ -17,28 +17,40 @@ def xor_key(line, key):
 def hamming_distance(a, b):
     if len(a) != len(b):
         return None 
-    arr = bytearray()
+    if type(a) == str:
+        a = a.encode('ascii')
+    if type(b) == str:
+        b = b.encode('ascii')
+    res = 0
     for i in range(len(a)):
-        arr.append((ord(a[i]) ^ ord(b[i])).bit_count())
-    return sum(arr)
+        res += (a[i] ^ b[i]).bit_count()
+    return res
 
 def hamming_normalised(splits):
-    out = []
+    res = 0
+    counted = 0
     for i in range(len(splits)):
         for j in range(i+1, len(splits)):
             value = hamming_distance(splits[i], splits[j])
             if value is not None:
-                out.append(value)
-    return sum(out) / float(len(splits))
+                res += value / float(len(splits[i]))
+                counted += 1
+    if counted == 0:
+        return -1
+    return res / float(counted)
 
 def find_keylen(data):
     candidates = []
     for keylen in range(1, len(data)):
         splits = []
         for i in range(0, len(data), keylen):
+            if i + keylen > len(data):
+                break
             splits.append(data[i:i+keylen])
         candidates.append([keylen, hamming_normalised(splits)])
-        print(splits)
+    candidates = list(filter(lambda x : x[1] > 0, candidates))
+    candidates = sorted(candidates, key=lambda x : x[1])
+    return candidates
 
 def main():
     if len(sys.argv) < 2:
@@ -51,7 +63,8 @@ def main():
     if "-d" in sys.argv:
         # decrypt
         data = bytearray.fromhex(file)
-        find_keylen(data)
+        candidates = find_keylen(data)
+        print(candidates)
         pass
     else:
         print(xor_key(file, "KEYFACTS").hex())
