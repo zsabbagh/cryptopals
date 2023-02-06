@@ -6,7 +6,14 @@ import os
 import copy
 import time
 
+
 DELIMITERS = " _"
+
+def is_alphabet(a):
+    val = a
+    if type(a) == str:
+        val = ord(a)
+    return (val >= 65 and val <= 90) or (val >= 97 and val <= 122)
 
 def xor_key(data, key):
     out = bytearray()
@@ -80,9 +87,7 @@ def alpha_prop(group):
         return 0
     res = 0
     for c in group:
-        if type(c) != str:
-            c = chr(c)
-        if c.isalpha():
+        if is_alphabet(c):
             res += 1
     return float(res) / len(group)
 
@@ -123,6 +128,8 @@ def key_candidates(alphabet, groups, keylen, min_prop=0.1, nmost_prob=3):
                 continue
             candidates[nr].append([chr(a), prop])
     candidates = list(map(lambda x : sorted(x, key=lambda x : x[1], reverse=True)[:nmost_prob], candidates))
+    print(candidates)
+    time.sleep(5)
     return candidates
 
 def key_trier(data, candidates):
