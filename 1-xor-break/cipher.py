@@ -9,7 +9,7 @@ import time
 
 DELIMITERS = " _"
 ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-ENGLISH = ALPHABET+"\n.,'!? -0123456789:"
+ENGLISH = ALPHABET+"\n.,'!? -0123456789:()&%$\""
 
 def in_alphabet(a, alphabet=None):
     if alphabet is not None:
@@ -24,14 +24,14 @@ def in_alphabet(a, alphabet=None):
 def xor_key(data, key):
     out = bytearray()
     i = 0
-    if type(data[0]) == str:
+    if len(data) > 0 and type(data[0]) == str:
         data = list(map(ord, data))
     if type(key[0]) == str:
         key = list(map(ord, key))
     for a in data:
         c = a
         c ^= key[i]
-        i = i+1 if (i+1) % len(key) != 0 else 0
+        i = (i+1) % len(key)
         out.append(c)
     return out
 
@@ -58,6 +58,8 @@ def hamming_normalised(splits):
             if value is not None:
                 res += value
                 counted += 1
+    if counted == 0:
+        return None
     res /= counted
     return res / float(len(splits[0]))
 
@@ -71,8 +73,9 @@ def find_keylen(data, n_most_likely=5, limit=40, give_bonus=False):
             if i + keylen > len(data):
                 break
             splits.append(data[i:i+keylen])
-        candidates.append([keylen, hamming_normalised(splits)])
-    candidates = list(filter(lambda x : x[1] > 0, candidates))
+        norm = hamming_normalised(splits)
+        candidates.append([keylen, norm])
+    candidates = list(filter(lambda x : x[1] is not None and x[1] > 0, candidates))
     candidates = sorted(candidates, key=lambda x : x[1])
     if give_bonus:
         for i in range(n_most_likely):
@@ -91,6 +94,8 @@ def xor_single(group: bytearray, key) -> list:
         else:
             key = int(key, 16)
     out = bytearray()
+    if len(group) > 0 and type(group[0]) == str:
+        group = list(map(ord, group))
     for i in range(len(group)):
         out.append(group[i] ^ key)
     return out
@@ -128,12 +133,10 @@ def average_wordlen(data, delimiters):
         out.append(sum(list(map(len, words))) / float(len(words)))
     return out
 
-def key_finder(groups, alpha_proportion=0.98):
+def key_finder(groups, min_alpha_prop=0.99):
     """
         int is exit code
     """
-    print()
-    print(f"Keylen: {len(groups)}")
     potentials = []
     for nr in range(len(groups)):
         potentials.append([])
@@ -141,60 +144,73 @@ def key_finder(groups, alpha_proportion=0.98):
         for char in ENGLISH:
             res = xor_single(group, char)
             prop = alpha_prop(res, alphabet=ENGLISH)
-            if prop >= alpha_proportion:
+            if prop >= min_alpha_prop:
                 potentials[nr].append((char, prop))
     key = []
     for arr in potentials:
         if len(arr) > 1:
-            print("ERROR: Multiple key candidates found.", file=sys.stderr)
-            key.append('{')
+            key.append('[')
         for (c, _) in arr:
             key.append(c)
         if len(arr) > 1:
-            key.append('}')
+            key.append(']')
     ok = True if len(key) == len(groups) else False
     return (''.join(key), ok)
 
-def most_common(data, n=3):
-    counter = {}
-    for c in data:
-        if c in counter:
-            counter[c] += 1
-        else:
-            counter[c] = 1
-    return list(map(lambda x : x[0], sorted(counter.items(), key=lambda x : x[1])[:n]))
-
-
-def decipher(data, key=None, nkeylens=3):
+def decipher(data, key=None, cand_keylens=None, nkeylens=3, give_mod_bonus=True):
     if key is not None:
         return xor_key(data, key).decode('ascii')
-    cand_keylens = find_keylen(data)[:nkeylens]
-    for cand_keylen in cand_keylens:
-        keylen = cand_keylen[0]
+    if cand_keylens is None:
+        cand_keylens = [x[0] for x in find_keylen(data, give_bonus=give_mod_bonus)[:nkeylens]]
+    for keylen in cand_keylens:
         groups = split_groups(data, keylen)
         (key, ok) = key_finder(groups)
         if ok:
             print()
-            print(f"--- Potential key found ---")
+            print(f"--- POTENTIAL key found ---")
             print(f"\nKey, with length {keylen}: <<{key}>>")
             print(xor_key(data, key)[:2*keylen].decode('ascii'))
+        elif len(key) < keylen:
+            print(f"ERROR: No key with length {keylen} found.", file=sys.stderr)
+        else:
+            print(f"ERROR: Multiple key candidates found for {keylen}. Too low min_alpha_prop?", file=sys.stderr)
+            print()
+            print(f"--- CONFLICTING key found ---")
+            print(f"\nKey, with length {keylen}: <<{key}>>")
 
 def main():
     if len(sys.argv) < 2:
         print("No arguments input")
         exit(1)
     key = None
+    use_hex = True if "--hex" in sys.argv else False
+    cand_keylens = None
     for i in range(len(sys.argv)):
         if sys.argv[i] == '-k' and i+1 < len(sys.argv):
             key = sys.argv[i+1]
+        if sys.argv[i] == '-l' and i+1 < len(sys.argv):
+            cand_keylens = list(map(int, sys.argv[i+1].split(',')))
     if "-d" in sys.argv:
         # decrypt
-        data = open(sys.argv[1], 'rb').read()
-        print(decipher(data, key=key))
+        file = open(sys.argv[1], 'r').read()
+        if alpha_prop(file, "0123456789abcdefABCDEF") >= 0.99:
+            data = bytes.fromhex(file).decode('ascii')
+        else:
+            data = file.encode('ascii')
+        decrypted = decipher(data, key=key, cand_keylens=cand_keylens)
+        if decrypted is not None:
+            print(decrypted)
         pass
     else:
         file = open(sys.argv[1], 'r').read().rstrip()
-        print(xor_key(file, "KEYFACTS").hex())
+        if key is None:
+            print("NO KEY PROVIDED. Exiting.")
+            exit(1)
+        res = xor_key(file, key)
+        if use_hex:
+            print(res.hex())
+        else:
+            sys.stdout.buffer.write(res)
 
 if __name__ == "__main__":
     main()
