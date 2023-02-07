@@ -1,5 +1,5 @@
 """
-    PKCS#7
+    CBC and PKCS#7
 """
 import sys
 import os
@@ -37,24 +37,38 @@ def xor(*arrs: bytes):
         out.append(val)
     return bytes(out)
 
-def ecb_encrypt(data, key):
+def ecb_encrypt(data: bytes, key: bytes):
     return AES.new(key, AES.MODE_ECB).encrypt(pkcs_pad(data, block_length=AES.block_size))
 
-def ecb_decrypt(data, key):
+def ecb_decrypt(data: bytes, key: bytes):
     return pkcs_unpad(AES.new(key, AES.MODE_ECB).decrypt(data))
 
-def cbc_decrypt(data: bytes, iv: bytes, block_length: int = 16):
-    pass
+def cbc_decrypt(data: bytes, iv: bytes, key: bytes, block_length: int = AES.block_size):
+    plain = bytes()
+    previous_block = iv
+    for i in range(0, len(data), block_length):
+        previous_block = data[i:i+block_length]
+        decrypted = ecb_decrypt(previous_block, key)
+        plain += xor(previous_block, decrypted)
+    return plain
 
-def cbc_encrypt(data: bytes, iv: bytes, block_length: int = 16):
-    pass
+def cbc_encrypt(data: bytes, iv: bytes, key: bytes, block_length: int=AES.block_size):
+    cipher = bytes()
+    previous_cipher = iv
+    for i in range(0, len(data), block_length):
+        previous_block = pkcs_pad(data[i:i+block_length], block_length=block_length)
+        previous_cipher = ecb_encrypt(xor(previous_cipher, previous_block), key)
+        cipher += previous_cipher
+    return cipher
 
 def main():
     args = sys.argv[1:]
-    new = pkcs_pad(args[0].encode('ascii'))
-    print(f"Length {len(new)}, data: '{new}'")
-    print(f"Unpadded: {pkcs_unpad(new)}")
-    pass
+    if '-9' in sys.argv:
+        new = pkcs_pad(args[0].encode('ascii'))
+        print(f"Length {len(new)}, data: '{new}'")
+        print(f"Unpadded: {pkcs_unpad(new)}")
+    if '-10' in sys.argv:
+        data = args[0].encode('ascii')
 
 if __name__ == "__main__":
     main()
