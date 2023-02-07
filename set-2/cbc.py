@@ -13,8 +13,10 @@ def pkcs_pad(data: bytes, block_length: int=20) -> bytes:
 
 def pkcs_unpad(data: bytes) -> bytes:
     # Does not anticipate block length
+    if len(data) < 1:
+        return data
     for i in range(len(data)-data[-1], len(data)):
-        if data[i] != data[-1]:
+        if i < 0 or i > len(data)-1 or data[i] != data[-1]:
             return data
     return data[:-data[-1]]
 
@@ -45,20 +47,20 @@ def ecb_decrypt(data: bytes, key: bytes):
 
 def cbc_decrypt(data: bytes, iv: bytes, key: bytes, block_length: int = AES.block_size):
     plain = bytes()
-    previous_block = iv
+    previous_block_xor = iv
     for i in range(0, len(data), block_length):
-        previous_block = data[i:i+block_length]
-        decrypted = ecb_decrypt(previous_block, key)
-        plain += xor(previous_block, decrypted)
-    return plain
+        encrypted = data[i:i+block_length]
+        plain += xor(previous_block_xor, ecb_decrypt(encrypted, key))
+        previous_block_xor = encrypted
+    return pkcs_unpad(plain)
 
 def cbc_encrypt(data: bytes, iv: bytes, key: bytes, block_length: int=AES.block_size):
     cipher = bytes()
-    previous_cipher = iv
+    previous_input = iv
     for i in range(0, len(data), block_length):
-        previous_block = pkcs_pad(data[i:i+block_length], block_length=block_length)
-        previous_cipher = ecb_encrypt(xor(previous_cipher, previous_block), key)
-        cipher += previous_cipher
+        plaintext = pkcs_pad(data[i:i+block_length], block_length=block_length)
+        previous_input = ecb_encrypt(xor(previous_input, plaintext), key)
+        cipher += previous_input
     return cipher
 
 def main():
@@ -69,6 +71,12 @@ def main():
         print(f"Unpadded: {pkcs_unpad(new)}")
     if '-10' in sys.argv:
         data = args[0].encode('ascii')
+        key = b'YELLOW SUBMARINE'
+        iv = os.urandom(AES.block_size)
+        print(f"IV used, in hexstr: {iv.hex()}")
+        enc = cbc_encrypt(data, iv, key)
+        dec = cbc_decrypt(enc, iv, key)
+        assert data == dec
 
 if __name__ == "__main__":
     main()
