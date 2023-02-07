@@ -13,6 +13,7 @@ ENGLISH = ALPHABET+"\n.,'!? -0123456789:()&%$\""
 
 def in_alphabet(a, alphabet=None):
     if alphabet is not None:
+        # If alphabet is given, check if in it
         if type(a) != str:
             a = chr(a)
         return True if a in alphabet else False
@@ -44,6 +45,7 @@ def hamming_distance(a, b):
         b = b.encode('ascii')
     res = 0
     for i in range(len(a)):
+        # Count bits set to 1
         res += (a[i] ^ b[i]).bit_count()
     return res
 
@@ -54,12 +56,14 @@ def hamming_normalised(splits):
     counted = 0
     for i in range(len(splits)):
         for j in range(i+1, len(splits)):
+            # Get hamming distance for each pair
             value = hamming_distance(splits[i], splits[j])
             if value is not None:
                 res += value
                 counted += 1
     if counted == 0:
         return None
+    # Divide with valid pairs
     res /= counted
     return res / float(len(splits[0]))
 
@@ -72,11 +76,15 @@ def find_keylen(data, n_most_likely=5, limit=40, give_bonus=False):
         for i in range(0, len(data), keylen):
             if i + keylen > len(data):
                 break
+            # Add each split
             splits.append(data[i:i+keylen])
+        # Get hamming distance normalised
         norm = hamming_normalised(splits)
         candidates.append([keylen, norm])
+    # Remove None's and those with value zero
     candidates = list(filter(lambda x : x[1] is not None and x[1] > 0, candidates))
     candidates = sorted(candidates, key=lambda x : x[1])
+    # Give bonus gives bonus to modulo groups
     if give_bonus:
         for i in range(n_most_likely):
             for j in range(n_most_likely+5):
@@ -96,11 +104,15 @@ def xor_single(group: bytearray, key) -> list:
     out = bytearray()
     if len(group) > 0 and type(group[0]) == str:
         group = list(map(ord, group))
+    # XOR with key
     for i in range(len(group)):
         out.append(group[i] ^ key)
     return out
 
-def alpha_prop(group, alphabet = None):
+def alpha_prop(group, alphabet=None) -> float:
+    """
+        Get proportion of alphabet occurrences
+    """
     if group is None or len(group) == 0:
         return 0
     res = 0
@@ -141,9 +153,11 @@ def key_finder(groups, min_alpha_prop=0.99):
     for nr in range(len(groups)):
         potentials.append([])
         group = groups[nr]
+        # Assuming the key is english
         for char in ENGLISH:
             res = xor_single(group, char)
             prop = alpha_prop(res, alphabet=ENGLISH)
+            # See proportion of alphabets
             if prop >= min_alpha_prop:
                 potentials[nr].append((char, prop))
     key = []
@@ -154,6 +168,7 @@ def key_finder(groups, min_alpha_prop=0.99):
             key.append(c)
         if len(arr) > 1:
             key.append(']')
+    # ok marks if the key is valid
     ok = True if len(key) == len(groups) else False
     return (''.join(key), ok)
 
