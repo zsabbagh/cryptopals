@@ -301,30 +301,29 @@ def main():
         # Trying to find key on last pos
         total = b''
         for round in range(0, min_blocks):
-            filler = b'A' * block_len * round
-            get_block = lambda x : x[block_len*(min_blocks-1):block_len*min_blocks]
+            get_block = lambda x, rnd : x[block_len*rnd:block_len*(rnd+1)]
             result = b''
             for n in range(1, block_len):
-                nfew_bytes = filler + total + b'A' * (block_len - n)
+                nfew_bytes = b'A' * (block_len - n)
                 tracker = {}
                 # Go through all possible bytes
                 for i in range(256):
                     byte_val = single_byte(i)
-                    curr_input = nfew_bytes + result + byte_val
+                    # Must offset byteval to last position
+                    # Total is a full block, result all previous found
+                    # IGNORE the blocks after this
+                    curr_input = nfew_bytes + total + result + byte_val
                     encrypted, _ = encrypting_oracle(curr_input)
-                    tracker[curr_input] = encrypted
+                    tracker[byte_val] = encrypted
                 output, _ = encrypting_oracle(nfew_bytes)
-                found = False
-                for (curr_input, encrypted) in tracker.items():
-                    if get_block(encrypted) == get_block(output):
-                        found = True
-                        result += single_byte(curr_input[-1])
+                # Search for a match
+                for (byte_val, encrypted) in tracker.items():
+                    if get_block(encrypted, round) == get_block(output, round):
+                        result += byte_val
                         break
-                if args.verbose and not found:
-                    print(f"Not found for {n}")
             print(f"\nResult: {result.decode('ascii')}")
             total += result
-        print(f"\nTotal: {total.decode('ascii')}")
+            print(f"\nTotal: {total.decode('ascii')}")
 
 
 
