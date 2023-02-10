@@ -300,31 +300,31 @@ def main():
         print(f"Is ECB encoded: {is_ecb_encoded}")
         # Trying to find key on last pos
         total = b''
-        for round in range(0, min_blocks):
-            get_block = lambda x, rnd : x[block_len*rnd:block_len*(rnd+1)]
+        for r in range(0, min_blocks):
+            round = r * block_len
             result = b''
-            for n in range(1, block_len):
+            for n in range(1, block_len+1):
                 nfew_bytes = b'A' * (block_len - n)
                 tracker = {}
                 # Go through all possible bytes
                 for i in range(256):
-                    byte_val = single_byte(i)
+                    byte = single_byte(i)
                     # Must offset byteval to last position
                     # Total is a full block, result all previous found
                     # IGNORE the blocks after this
-                    curr_input = nfew_bytes + total + result + byte_val
+                    curr_input = nfew_bytes + total + result + byte
                     encrypted, _ = encrypting_oracle(curr_input)
-                    tracker[byte_val] = encrypted
+                    tracker[byte] = encrypted[round:round+block_len]
                 output, _ = encrypting_oracle(nfew_bytes)
                 # Search for a match
-                for (byte_val, encrypted) in tracker.items():
-                    if get_block(encrypted, round) == get_block(output, round):
-                        result += byte_val
+                for (byte, encrypted) in tracker.items():
+                    if encrypted == output[round:round+block_len]:
+                        result += byte
                         break
             print(f"\nResult: {result.decode('ascii')}")
             total += result
-            print(f"\nTotal: {total.decode('ascii')}")
 
+        print(f"\nTotal:\n{total.decode('ascii')}")
 
 
 if __name__ == "__main__":
