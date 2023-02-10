@@ -2,6 +2,7 @@
     CBC and PKCS#7
 """
 import sys
+import re
 import time
 import os
 from Crypto.Cipher import AES
@@ -17,6 +18,7 @@ parser.add_argument("-i", "--input", type=str, help="input data as string")
 parser.add_argument("--iv", type=str, help="initialisation vector, hexstr")
 parser.add_argument("-k", "--key", type=str, default='YELLOW SUBMARINE', help="key, defaults to YELLOW SUBMARINE")
 parser.add_argument("-v", "--verbose", help="verbose print to stdout", action="store_true")
+parser.add_argument("--char", help="filler char", type=str, default='.')
 parser.add_argument("--times", type=int, default=100, help="times to run oracle")
 parser.add_argument("-f", "--file", type=str, help="input file")
 parser.add_argument("-o", "--output", type=str)
@@ -28,10 +30,16 @@ parser.add_argument('-l', "--len", type=int, help="size of random hex key", defa
 parser.add_argument('-w', "--wait", type=float, help="wait seconds between instructions", default=0.1)
 args = parser.parse_args()
 
-def wait():
-    time.sleep(args.wait)
+def wait(amount: float=args.wait):
+    time.sleep(amount)
 
-def random_hex(length: int=16, upper: bool=False) -> str:
+def key_generator(length: int = AES.block_size) -> bytes:
+    """
+        Returns a random byte sequence of 'length'
+    """
+    return os.urandom(length)
+
+def random_hex(length: int=AES.block_size, upper: bool=False) -> str:
     """
         Returns a random hex string.
     """
@@ -40,7 +48,7 @@ def random_hex(length: int=16, upper: bool=False) -> str:
         return res.upper()
     return res
 
-RANDOM_KEY = random_hex(args.len).encode('ascii')
+RANDOM_KEY = key_generator()
 ASSIGNMENT_TWELVE_STRING = "Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkgaGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBqdXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUgYnkK"
 
 def is_hex(s: str):
@@ -102,6 +110,12 @@ def xor(*arrs: bytes):
     return bytes(out)
 
 def ecb_encrypt(data: bytes, key: bytes):
+    if type(data) == str:
+        try:
+            data = data.encode('ascii')
+        except:
+            print("Failed to decode string", file=sys.stderr)
+            exit(1)
     cipher = AES.new(key, AES.MODE_ECB)
     out = bytes()
     for i in range(0, len(data), AES.block_size):
@@ -114,7 +128,7 @@ def ecb_decrypt(data: bytes, key: bytes):
     out = bytes()
     for i in range(0, len(data), AES.block_size):
         block = data[i:i+AES.block_size]
-        out += pkcs_unpad(AES.new(key, AES.MODE_ECB).decrypt(block))
+        out += pkcs_unpad(cipher.decrypt(block))
     return out
 
 def cbc_decrypt(data: bytes, key: bytes, iv: bytes, block_length: int = AES.block_size):
@@ -162,8 +176,17 @@ def encrypting_oracle(data, key=RANDOM_KEY, iv=b'00000000', random_bytes=False, 
         If Assignment == '12', it encrypts with ECB
     """
     if args.assignment == '12':
+        # Assignment 12 specification of the oracle
         new = bytes(base64.b64decode(ASSIGNMENT_TWELVE_STRING))
         data += new
+        out = ecb_encrypt(data, key)
+        return out, True
+    elif args.assignment == '13':
+        # Assignment 13 specification of the oracle
+        if type(data) == bytes:
+            data = profile_for(data.decode('ascii'))
+        else:
+            data = profile_for(data)
         out = ecb_encrypt(data, key)
         return out, True
     else:
@@ -179,7 +202,60 @@ def encrypting_oracle(data, key=RANDOM_KEY, iv=b'00000000', random_bytes=False, 
         return ecb_encrypt(data, key), True
     else:
         return cbc_encrypt(data, key, iv), False
-        
+
+def break_ecb_aglorithm(algorithm):
+    prev_len = -1
+    curr_input = b'A'
+    block_len = None
+    # Find block length
+    while block_len is None:
+        encrypted = algorithm(curr_input)
+        if len(encrypted) > prev_len and prev_len > 0:
+            block_len = len(encrypted) - prev_len
+            break
+        else:
+            prev_len = len(encrypted)
+        curr_input += b'A'
+    # Min blocks
+    encrypted = algorithm(b'')
+    min_blocks = len(encrypted) // block_len
+    # Check ECB encoding
+    is_ecb_encoded = is_ecb(algorithm(b'A'*2*block_len))
+    if args.verbose:
+        print(f"Block length {block_len}")
+        print(f"Encrypted len: {len(encrypted)}")
+        print(f"Minimum blocks: {min_blocks}")
+        print(f"Is ECB encoded: {is_ecb_encoded}")
+    # Trying to find key on last pos
+    total = b''
+    for r in range(0, min_blocks):
+        round = r * block_len
+        result = b''
+        for n in range(1, block_len+1):
+            nfew_bytes = b'A' * (block_len - n)
+            tracker = {}
+            # Go through all possible bytes
+            for i in range(256):
+                byte = single_byte(i)
+                # Must offset byteval to last position
+                # Total is a full block, result all previous found
+                # IGNORE the blocks after this
+                curr_input = nfew_bytes + total + result + byte
+                encrypted = algorithm(curr_input)
+                tracker[byte] = encrypted[round:round+block_len]
+            output = algorithm(nfew_bytes)
+            # Search for a match
+            for (byte, encrypted) in tracker.items():
+                if encrypted == output[round:round+block_len]:
+                    result += byte
+                    break
+        if args.verbose:
+            print(f"\nResult: {result.decode('ascii')}")
+        total += result
+
+    if args.verbose:
+        print(f"\nTotal:\n{total.decode('ascii')}")
+    return total
 
 def initialise():
     """
@@ -217,15 +293,58 @@ def run_tests(data, key, iv):
     print("not is_ecb",end="")
     assert not is_ecb(b'0djwadokcndwadiwoajdowa9d291jdw')
     print("...OK")
+    print("random",end="")
     random_data = os.urandom(128)
     encrypted_data = cbc_encrypt(random_data, key, iv)
-    print("random",end="")
     assert cbc_decrypt(encrypted_data, key, iv) == random_data
+    print("...OK")
+    print("email",end='')
+    email = 'correct@email.com'
+    assert profile_for(email) != ''
     print("...OK")
     print("\nAll tests OK!")
 
 def single_byte(i: int):
     return int.to_bytes(i, 1, 'little')
+
+def parse_cookie(cookie: str, delim: str='&', eq: str='=') -> dict:
+    """
+        Cuts a cookie by the delimiter 'delim' and 'eq' to a dictionary
+    """
+    first =  filter(len, cookie.split(delim))
+    res = dict(filter(lambda x : len(x) == 2, map(lambda x : x.split(eq), first)))
+    return res
+
+def unparse_cookie(parsed_cookie: dict):
+    out = []
+    items = parsed_cookie.items()
+    i = 0
+    for (k, v) in items:
+        out.append(k + '=' + v)
+        i += 1
+        if i < len(items):
+            out.append('&')
+    return ''.join(out)
+
+def profile_for(email: str) -> str:
+    """
+        Generates a profile for an email
+        Returns None if email is invalid
+    """
+    email = re.sub('[&=]', '', email)
+    uid = str(random.randint(0, 1024))
+    uid = '0' * (4 - len(uid)) + uid
+    return f"email={email}&uid={uid}&role=user"
+
+def decrypting_oracle(encrypted_data: bytes, key=RANDOM_KEY):
+    if args.verbose:
+        print(f"entering decryptor")
+        print(f"input: {encrypted_data.hex()} ({len(encrypted_data)})")
+    decrypted = ecb_decrypt(encrypted_data, key)
+    out = decrypted.decode('ascii')
+    if args.verbose:
+        print(out)
+    return parse_cookie(out)
 
 def main():
     # Seed PRNG
@@ -276,56 +395,41 @@ def main():
         print(f"...where {count_ecb_guesses} guesses were ECB")
         print(f"...where {count_ecb_actuals} actuals were ECB")
     if args.assignment == '12':
-        # Check data
-        prev_len = -1
-        curr_input = b'A'
-        block_len = None
-        # Find block length
-        while block_len is None:
-            encrypted, _ = encrypting_oracle(curr_input)
-            if len(encrypted) > prev_len and prev_len > 0:
-                block_len = len(encrypted) - prev_len
-                break
-            else:
-                prev_len = len(encrypted)
-            curr_input += b'A'
-        print(f"Block length {block_len}")
-        # Min blocks
-        encrypted, _ = encrypting_oracle(b'')
-        min_blocks = len(encrypted) // block_len
-        print(f"Encrypted len: {len(encrypted)}")
-        print(f"Minimum blocks: {min_blocks}")
-        # Check ECB encoding
-        is_ecb_encoded = is_ecb(encrypting_oracle(b'A'*2*block_len)[0])
-        print(f"Is ECB encoded: {is_ecb_encoded}")
-        # Trying to find key on last pos
-        total = b''
-        for r in range(0, min_blocks):
-            round = r * block_len
-            result = b''
-            for n in range(1, block_len+1):
-                nfew_bytes = b'A' * (block_len - n)
-                tracker = {}
-                # Go through all possible bytes
-                for i in range(256):
-                    byte = single_byte(i)
-                    # Must offset byteval to last position
-                    # Total is a full block, result all previous found
-                    # IGNORE the blocks after this
-                    curr_input = nfew_bytes + total + result + byte
-                    encrypted, _ = encrypting_oracle(curr_input)
-                    tracker[byte] = encrypted[round:round+block_len]
-                output, _ = encrypting_oracle(nfew_bytes)
-                # Search for a match
-                for (byte, encrypted) in tracker.items():
-                    if encrypted == output[round:round+block_len]:
-                        result += byte
-                        break
-            print(f"\nResult: {result.decode('ascii')}")
-            total += result
-
-        print(f"\nTotal:\n{total.decode('ascii')}")
-
+        # Set algorithm
+        algorithm = lambda x : encrypting_oracle(x)[0]
+        result = break_ecb_aglorithm(algorithm)
+        print("--- RESULT ---")
+        print(result.decode('ascii'))
+    if args.assignment == '13':
+        if not args.input:
+            print("Error: Requires input -i", file=sys.stderr)
+            exit(1)
+        filler_char = args.char
+        # random key
+        print(f"key: \t{RANDOM_KEY.hex()} (length {len(RANDOM_KEY)})")
+        # An entire block of a padded admin
+        oracle = lambda x : encrypting_oracle(x)[0]
+        # We want admin to end up on a block of itself
+        other = 'email=&uid=xxxx&role='
+        print(f"other:\t{other} ({len(other)})")
+        email_const = args.input
+        # Pad
+        email = email_const + filler_char * (AES.block_size - len(email_const) - len('email=') )
+        print(f"email:\t{email} ({len(email)})")
+        # admin will be added directly after ..uid=<uid>&role=<here!>
+        admin = pkcs_pad(b'admin') # replaces third block
+        data = email.encode('ascii') + admin
+        admin_block = oracle(data)[AES.block_size:AES.block_size*2]
+        email = email_const + filler_char * ((2 * AES.block_size) - len(email_const) - len(other))
+        print(f"email:\t{email} ({len(email)})")
+        expected = "email=" + email + other[6:]
+        print(f"expected: {expected} ({len(expected)})")
+        print(f"total:\t({len(other)}, {len(email)})")
+        out_block = oracle(email)
+        print(f"out_block: ({len(out_block)})")
+        crack_block = out_block[:2*AES.block_size] + admin_block
+        print(f"crack_block: ({len(crack_block)})")
+        decrypting_oracle(crack_block)
 
 if __name__ == "__main__":
     main()
