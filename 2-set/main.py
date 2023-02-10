@@ -90,6 +90,15 @@ def pkcs_unpad(data: bytes) -> bytes:
             return data
     return data[:-data[-1]]
 
+def pkcs_validate(data: bytes) -> bytes:
+    # Does not anticipate block length
+    if len(data) < 1:
+        return False
+    for i in range(len(data)-data[-1], len(data)):
+        if i < 0 or i > len(data)-1 or data[i] != data[-1]:
+            return False
+    return True
+
 def xor(*arrs: bytes):
     """
         XORs any amount of byte arrays and returns
@@ -175,11 +184,12 @@ def encrypting_oracle(data, key=RANDOM_KEY, iv=b'00000000', random_bytes=False, 
         Returns (data_encrypted, is_encrypted_with_cbc)
         If Assignment == '12', it encrypts with ECB
     """
-    if args.assignment == '12':
+    if args.assignment in ['12', '14']:
         # Assignment 12 specification of the oracle
         new = bytes(base64.b64decode(ASSIGNMENT_TWELVE_STRING))
-        data += new
-        out = ecb_encrypt(data, key)
+        input_data = os.urandom(random.randint(0, 128)) if args.assignment == '14' else b''
+        input_data += data + new
+        out = ecb_encrypt(input_data, key)
         return out, True
     elif args.assignment == '13':
         # Assignment 13 specification of the oracle
@@ -203,19 +213,47 @@ def encrypting_oracle(data, key=RANDOM_KEY, iv=b'00000000', random_bytes=False, 
     else:
         return cbc_encrypt(data, key, iv), False
 
-def break_ecb_aglorithm(algorithm):
+def find_minimum_size(data, algorithm, times=100):
+    """
+        Finds the minimum encryption size
+        of an algorithm, with the data,
+        encrypted tried times many times
+    """
+    min_encsize = None
+    # random
+    if random:
+        # High probability of finding minimum
+        for _ in range(times):
+            newlen = len(algorithm(data))
+            if min_encsize is None or newlen < min_encsize:
+                min_encsize = newlen
+    return min_encsize
+
+def find_block_length(algorithm, random=False):
+    """
+        Find block length of ECB algorithm
+    """
     prev_len = -1
-    curr_input = b'A'
     block_len = None
+    if random:
+        get_length = lambda x : find_minimum_size(x, algorithm, 100)
+    else:
+        get_length = lambda x : len(algorithm(x))
+    # Current input
+    curr_input = b'A'
     # Find block length
     while block_len is None:
-        encrypted = algorithm(curr_input)
-        if len(encrypted) > prev_len and prev_len > 0:
-            block_len = len(encrypted) - prev_len
+        length = get_length(curr_input)
+        if length > prev_len and prev_len > 0:
+            block_len = length - prev_len
             break
         else:
-            prev_len = len(encrypted)
+            prev_len = length
         curr_input += b'A'
+    return block_len
+
+def break_ecb_aglorithm(algorithm, random=False):
+    block_len = find_block_length(algorithm, random=random)
     # Min blocks
     encrypted = algorithm(b'')
     min_blocks = len(encrypted) // block_len
@@ -430,6 +468,20 @@ def main():
         crack_block = out_block[:2*AES.block_size] + admin_block
         print(f"crack_block: ({len(crack_block)})")
         decrypting_oracle(crack_block)
+    if args.assignment == '14':
+        algorithm = lambda x : encrypting_oracle(x)[0]
+        result = break_ecb_aglorithm(algorithm, random=True)
+        print("--- RESULT ---")
+        print(result.decode('ascii'))
+        pass
+    if args.assignment == '15':
+        true_input = b"ICE ICE BABY\x04\x04\x04\x04"
+        assert pkcs_validate(true_input)
+        false_input = b"ICE ICE BABY\x05\x05\x05\x05"
+        assert not pkcs_validate(false_input)
+        false_input = b"ICE ICE BABY\x01\x02\x03\x04"
+        assert not pkcs_validate(false_input)
+        print("Success.")
 
 if __name__ == "__main__":
     main()
