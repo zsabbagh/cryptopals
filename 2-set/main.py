@@ -95,7 +95,7 @@ def pkcs_unpad(data: bytes) -> bytes:
             return data
     return data[:-data[-1]]
 
-def pkcs_validate(data: bytes) -> bytes:
+def pkcs_validate(data: bytes) -> bool:
     # Does not anticipate block length
     if len(data) < 1:
         raise ValueError
@@ -177,7 +177,7 @@ def is_ecb(data: bytes, block_length: int=AES.block_size) -> bool:
             occurrences[block] += 1
         else:
             occurrences[block] = 1
-    for (block, times) in occurrences.items():
+    for (_, times) in occurrences.items():
         if times > 1:
             return True
     return False
@@ -215,8 +215,7 @@ def encrypting_oracle(data, key=RANDOM_KEY, iv=b'00000000', random_bytes=False, 
     is_ecb_encrypted = random.randint(0, 1) == 0
     if is_ecb_encrypted:
         return ecb_encrypt(data, key), True
-    else:
-        return cbc_encrypt(data, key, iv), False
+    return cbc_encrypt(data, key, iv), False
 
 def find_block_length(algorithm):
     """
@@ -228,11 +227,6 @@ def find_block_length(algorithm):
     start = b''
     # Find block length
     while block_len is None:
-        # TODO: We need to know where to start
-        # we have knowledge that PREF+start+SUF
-        # is divisable with block_len
-        # We want to know PREF length or SUF length
-        # Switch twice
         length = len(algorithm(start))
         if length > prev_len and prev_len > 0:
             block_len = length - prev_len
@@ -248,16 +242,19 @@ def break_ecb_aglorithm(algorithm, random_prefix=False):
     # We need to find block offset
     char_offset = None
     block_offset = 0
+    prefix_len = None
     if random_prefix:
         # iterate till we find two repetitions
-        for off in range(0, block_len):
-            repetition = algorithm(b'A' * (2 * block_len + off))
+        for offset in range(0, block_len):
+            repetition = algorithm(b'A' * (2 * block_len + offset))
             for i in range(block_len, len(repetition), block_len):
                 if repetition[i-block_len:i] == repetition[i:i+block_len]:
-                    char_offset = off
+                    char_offset = offset
                     block_offset = i - block_len
+                    prefix_len = block_offset - char_offset
                     if args.verbose:
                         print(f"Offset found {char_offset}")
+                        print(f"Prefix length {block_offset-char_offset}")
                         print(f"Block offset: {block_offset}")
                     break
             if char_offset is not None:
@@ -266,7 +263,10 @@ def break_ecb_aglorithm(algorithm, random_prefix=False):
 
     # Min blocks
     encrypted = algorithm(b'')
-    min_blocks = len(encrypted) // block_len
+    if prefix_len is None:
+        min_blocks = len(encrypted) // block_len
+    else:
+        min_blocks = (len(encrypted) - prefix_len) // block_len
     # Check ECB encoding
     is_ecb_encoded = is_ecb(algorithm(b'A'*2*block_len))
     if args.verbose:
@@ -282,14 +282,14 @@ def break_ecb_aglorithm(algorithm, random_prefix=False):
         round = r * block_len
         result = b''
         for n in range(1, block_len+1):
+            # Add filler to fill out to next block
+            # Then add 'A's until byte is checked
             nfew_bytes = filler + b'A' * (block_len - n)
             tracker = {}
             # Go through all possible bytes
             for i in range(256):
                 byte = single_byte(i)
                 # Must offset byteval to last position
-                # Total is a full block, result all previous found
-                # IGNORE the blocks after this
                 curr_input = nfew_bytes + total + result + byte
                 encrypted = algorithm(curr_input)
                 tracker[byte] = encrypted[block_offset + round:block_offset + round+block_len]
@@ -463,12 +463,15 @@ def main():
         other = 'email=&uid=xxxx&role='
         print(f"other:\t{other} ({len(other)})")
         email_const = args.input
-        # Pad
+        # pad to the next block
+        # we need to get an "admin" block encrypted
         email = email_const + filler_char * (AES.block_size - len(email_const) - len('email=') )
         print(f"email:\t{email} ({len(email)})")
-        # admin will be added directly after ..uid=<uid>&role=<here!>
-        admin = pkcs_pad(b'admin') # replaces third block
+        # admin will be added directly after ..&role=<HERE!>
+        admin = pkcs_pad(b'admin')
+        # data to input
         data = email.encode('ascii') + admin
+        # the admin block to replace with
         admin_block = oracle(data)[AES.block_size:AES.block_size*2]
         email = email_const + filler_char * ((2 * AES.block_size) - len(email_const) - len(other))
         print(f"email:\t{email} ({len(email)})")
@@ -479,7 +482,9 @@ def main():
         print(f"out_block: ({len(out_block)})")
         crack_block = out_block[:2*AES.block_size] + admin_block
         print(f"crack_block: ({len(crack_block)})")
-        decrypting_oracle(crack_block)
+        parsed = decrypting_oracle(crack_block)
+        print("\n--- OUTPUT ---")
+        print(unparse_cookie(parsed))
     if args.assignment == '14':
         algorithm = lambda x : encrypting_oracle(x)[0]
         result = break_ecb_aglorithm(algorithm, random_prefix=True)
