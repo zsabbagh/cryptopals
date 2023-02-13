@@ -28,6 +28,7 @@ parser.add_argument("-d", "--decrypt", action="store_true", help="decryption mod
 parser.add_argument("-e", "--encrypt", action="store_true", help="encryption mode for ECB/CBC assignment")
 parser.add_argument('-l', "--len", type=int, help="size of random hex key", default=16)
 parser.add_argument('-w', "--wait", type=float, help="wait seconds between instructions", default=0.1)
+parser.add_argument("--prefix", type=int, help="prefix length", default=0)
 args = parser.parse_args()
 
 def wait(amount: float=args.wait):
@@ -49,7 +50,10 @@ def random_hex(length: int=AES.block_size, upper: bool=False) -> str:
     return res
 
 RANDOM_KEY = key_generator()
-RANDOM_PREFIX = os.urandom(random.randint(0, 128))
+if args.prefix:
+    RANDOM_PREFIX = os.urandom(args.prefix)
+else:
+    RANDOM_PREFIX = os.urandom(random.randint(0, 128))
 ASSIGNMENT_TWELVE_STRING = "Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkgaGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBqdXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUgYnkK"
 
 def is_hex(s: str):
@@ -236,21 +240,30 @@ def find_block_length(algorithm):
         else:
             prev_len = length
         start += b'A'
-    return block_len, start
+    return block_len
 
 def break_ecb_aglorithm(algorithm, random_prefix=False):
-    block_len, start = find_block_length(algorithm)
-    if not random_prefix:
-        start = b''
-    else:
-        start = start[:-1]
-        print(start)
-        print(f"rap ({len(RANDOM_PREFIX)})")
-        print(f"rem ({len(start)})")
-        print(f"tot ({len(RANDOM_PREFIX) + len(start)})")
-        print(f"blocklen ({block_len})")
-        print(f"({(len(RANDOM_PREFIX) + len(start)) % block_len})")
-        assert (len(RANDOM_PREFIX) + len(start)) % block_len == 0
+
+    block_len = find_block_length(algorithm)
+    # We need to find block offset
+    char_offset = None
+    block_offset = 0
+    if random_prefix:
+        # iterate till we find two repetitions
+        for off in range(0, block_len):
+            repetition = algorithm(b'A' * (2 * block_len + off))
+            for i in range(block_len, len(repetition), block_len):
+                if repetition[i-block_len:i] == repetition[i:i+block_len]:
+                    char_offset = off
+                    block_offset = i - block_len
+                    if args.verbose:
+                        print(f"Offset found {char_offset}")
+                        print(f"Block offset: {block_offset}")
+                    break
+            if char_offset is not None:
+                break
+
+
     # Min blocks
     encrypted = algorithm(b'')
     min_blocks = len(encrypted) // block_len
@@ -261,13 +274,15 @@ def break_ecb_aglorithm(algorithm, random_prefix=False):
         print(f"Encrypted len: {len(encrypted)}")
         print(f"Minimum blocks: {min_blocks}")
         print(f"Is ECB encoded: {is_ecb_encoded}")
+
     # Trying to find key on last pos
+    filler = b'A' * char_offset
     total = b''
     for r in range(0, min_blocks):
         round = r * block_len
         result = b''
         for n in range(1, block_len+1):
-            nfew_bytes = start + b'A' * (block_len - n)
+            nfew_bytes = filler + b'A' * (block_len - n)
             tracker = {}
             # Go through all possible bytes
             for i in range(256):
@@ -277,11 +292,11 @@ def break_ecb_aglorithm(algorithm, random_prefix=False):
                 # IGNORE the blocks after this
                 curr_input = nfew_bytes + total + result + byte
                 encrypted = algorithm(curr_input)
-                tracker[byte] = encrypted[round:round+block_len]
+                tracker[byte] = encrypted[block_offset + round:block_offset + round+block_len]
             output = algorithm(nfew_bytes)
             # Search for a match
             for (byte, encrypted) in tracker.items():
-                if encrypted == output[round:round+block_len]:
+                if encrypted == output[block_offset+round:block_offset+round+block_len]:
                     result += byte
                     break
         if args.verbose:
