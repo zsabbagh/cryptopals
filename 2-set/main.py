@@ -240,7 +240,7 @@ def break_ecb_aglorithm(algorithm, random_prefix=False):
 
     block_len = find_block_length(algorithm)
     # We need to find block offset
-    char_offset = None
+    char_offset = 0
     block_offset = 0
     prefix_len = None
     if random_prefix:
@@ -324,7 +324,10 @@ def initialise():
         if args.bytesmode:
             data = open(args.file, 'rb').read()
         else:
-            data = read_str(open(args.file, 'r').read())
+            try:
+                data = read_str(open(args.file, 'r').read())
+            except:
+                data = open(args.file, 'rb').read()
     if args.key:
         key = args.key.encode('ascii')
         if len(key) != AES.block_size:
@@ -424,9 +427,9 @@ def main():
         print(f"Unpadded: {pkcs_unpad(new)}")
     if args.assignment == '10':
         print(f"IV used, in hexstr: {iv.hex()}")
-        enc = cbc_encrypt(data, key, iv)
-        dec = cbc_decrypt(enc, key, iv)
-        assert data == dec
+        iv = bytearray(16)
+        dec = cbc_decrypt(data, key, iv)
+        print(dec)
     # Oracle assignment
     if args.assignment == '11':
         guessed_correct = 0
