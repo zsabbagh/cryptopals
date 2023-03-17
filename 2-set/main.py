@@ -467,23 +467,25 @@ def main():
         print(f"other:\t{other} ({len(other)})")
         email_const = args.input
         # pad to the next block
+        total_len = len(email_const) + len('email=')
+        blocks = (((total_len-1) // AES.block_size) + 1)
         # we need to get an "admin" block encrypted
-        email = email_const + filler_char * (AES.block_size - len(email_const) - len('email=') )
+        email = email_const + filler_char * (blocks*AES.block_size - len(email_const) - len('email=') )
         print(f"email:\t{email} ({len(email)})")
         # admin will be added directly after ..&role=<HERE!>
         admin = pkcs_pad(b'admin')
         # data to input
         data = email.encode('ascii') + admin
         # the admin block to replace with
-        admin_block = oracle(data)[AES.block_size:AES.block_size*2]
-        email = email_const + filler_char * ((2 * AES.block_size) - len(email_const) - len(other))
+        admin_block = oracle(data)[blocks*AES.block_size:(blocks+1)*AES.block_size]
+        email = email_const + filler_char * (((blocks+1) * AES.block_size) - len(email_const) - len(other))
         print(f"email:\t{email} ({len(email)})")
         expected = "email=" + email + other[6:]
         print(f"expected: {expected} ({len(expected)})")
         print(f"total:\t({len(other)}, {len(email)})")
         out_block = oracle(email)
         print(f"out_block: ({len(out_block)})")
-        crack_block = out_block[:2*AES.block_size] + admin_block
+        crack_block = out_block[:(blocks+1)*AES.block_size] + admin_block
         print(f"crack_block: ({len(crack_block)})")
         parsed = decrypting_oracle(crack_block)
         print("\n--- OUTPUT ---")
